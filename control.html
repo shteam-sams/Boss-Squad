@@ -36,6 +36,11 @@
   button[aria-pressed="true"] { background: var(--purple); border-color: transparent; }
   .code { font-size: 40px; font-weight: 800; letter-spacing: .12em; color: var(--yellow); line-height: 1; }
   .note { font-size: 13px; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+  .lbl { display: block; font-size: 13px; font-weight: 700; color: var(--text, #F6F4EF); margin: 8px 0 4px; }
+  .reslist { display: grid; gap: 2px; max-height: 260px; overflow-y: auto; margin-bottom: 8px; }
+  .resrow { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 4px 8px; border-radius: 6px; background: rgba(255,255,255,.04); }
+  .resrow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .resrow b { white-space: nowrap; }
+  .resrow.low b { color: var(--pink); }
   .warn { color: var(--pink); font-weight: 700; }
   .hidden { display: none !important; }
   .q { font-weight: 700; font-size: 16px; }
@@ -130,6 +135,17 @@
     <h2>Students <span id="count"></span></h2>
     <div class="players" id="players"><p class="note">No one has joined yet.</p></div>
   </section>
+
+  <details id="resDetails" open>
+    <summary>Results <span id="resCount" class="note"></span></summary>
+    <div class="stack">
+      <div id="resBody"></div>
+      <button type="button" id="resCopy" class="go">Copy for Google Sheets</button>
+      <button type="button" id="resCsv">Download results (CSV)</button>
+      <button type="button" id="resAll">Download every answer (CSV)</button>
+      <button type="button" id="resClear">Clear results</button>
+    </div>
+  </details>
 
 
   <details>
@@ -338,6 +354,61 @@ function twoTap(btn, label, fn) { let armed = false; btn.onclick = () => { if (!
 twoTap($('reset'), 'End game, keep room code', () => cmd({ c: 'reset' }));
 twoTap($('resetNew'), 'End game with a new room code', () => cmd({ c: 'reset', newRoom: true }));
 render();
+/* ---------- results: read the game's answer log and summarize it ---------- */
+const LKEY = 'bosssquad:log';
+const pct = (r, a) => a ? Math.round(100 * r / a) + '%' : '—';
+function readResults() {
+  let log = []; try { log = JSON.parse(localStorage.getItem(LKEY) || '[]'); } catch (e) {}
+  const st = {}, qs = {};
+  log.forEach(e => {
+    const sk = String(e.n || '?').trim().toLowerCase(), b = e.m === 'T' ? 'T' : 'B';
+    const S2 = st[sk] || (st[sk] = { name: e.n, cls: e.c, right: 0, ans: 0, skip: 0, T: [0, 0], B: [0, 0] }); S2.cls = e.c;
+    const qk = e.r ? 'r' + e.r : 'q' + e.q;
+    const Q = qs[qk] || (qs[qk] = { row: e.r, text: e.q || '(picture question)', right: 0, ans: 0, skip: 0, T: [0, 0], B: [0, 0] });
+    [S2, Q].forEach(o => { if (e.ok === null) o.skip++; else { o.ans++; o[b][1]++; if (e.ok) { o.right++; o[b][0]++; } } });
+  });
+  return { log, students: Object.values(st).sort((a, b) => a.name.localeCompare(b.name)), questions: Object.values(qs).sort((a, b) => (a.row || 9999) - (b.row || 9999)) };
+}
+function resultTables(R) {
+  const studs = [['Student', 'Class', '% correct', 'Correct', 'Answered', 'Skipped', 'Training % correct', 'Boss fight % correct'],
+    ...R.students.map(s => [s.name, (CLS[s.cls] || [s.cls])[0], pct(s.right, s.ans), s.right, s.ans, s.skip, pct(s.T[0], s.T[1]), pct(s.B[0], s.B[1])])];
+  const ques = [['Sheet row', 'Question', '% correct', 'Correct', 'Answered', 'Skipped', 'Training % correct', 'Boss fight % correct'],
+    ...R.questions.map(q => [q.row || '', q.text, pct(q.right, q.ans), q.right, q.ans, q.skip, pct(q.T[0], q.T[1]), pct(q.B[0], q.B[1])])];
+  return { studs, ques };
+}
+const tsv = rows => rows.map(r => r.map(c => String(c).replace(/[\t\n]/g, ' ')).join('\t')).join('\n');
+const csv = rows => rows.map(r => r.map(c => { c = String(c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(',')).join('\r\n');
+function download(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + text], { type: 'text/csv' })); a.download = name; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
+const stamp = () => new Date().toISOString().slice(0, 10);
+function renderResults() {
+  const R = readResults(), box = $('resBody');
+  $('resCount').textContent = R.log.length ? `${R.log.length} answers` : '';
+  box.innerHTML = '';
+  if (!R.log.length) { box.innerHTML = '<p class="note">No answers yet. Results appear here as students answer, and keep adding up across games until you clear them.</p>'; return; }
+  const mk = (title, items) => { const h = document.createElement('p'); h.className = 'lbl'; h.textContent = title; box.append(h);
+    const list = document.createElement('div'); list.className = 'reslist';
+    items.forEach(([label, val, n, low]) => { const row = document.createElement('div'); row.className = 'resrow' + (low ? ' low' : '');
+      row.innerHTML = '<span></span><b></b>'; row.firstChild.textContent = label; row.lastChild.textContent = `${val} (${n})`; list.append(row); });
+    box.append(list); };
+  mk('Students · % correct (answered)', R.students.map(s => [s.name, pct(s.right, s.ans), s.ans, s.ans && s.right / s.ans < .6]));
+  mk('Questions, hardest first · % correct (answered)', R.questions.slice().sort((a, b) => (a.ans ? a.right / a.ans : 2) - (b.ans ? b.right / b.ans : 2))
+    .map(q => [(q.row ? `Row ${q.row}: ` : '') + q.text, pct(q.right, q.ans), q.ans, q.ans && q.right / q.ans < .6]));
+}
+$('resCopy').onclick = async () => { const T = resultTables(readResults());
+  try { await navigator.clipboard.writeText('Students\n' + tsv(T.studs) + '\n\nQuestions\n' + tsv(T.ques)); $('resCopy').textContent = 'Copied: paste into a Google Sheet'; }
+  catch (e) { $('resCopy').textContent = 'Copy didn’t work here; use Download'; } setTimeout(() => $('resCopy').textContent = 'Copy for Google Sheets', 2500); };
+$('resCsv').onclick = () => { const T = resultTables(readResults()); download(`boss-squad-results-${stamp()}.csv`, 'Students\r\n' + csv(T.studs) + '\r\n\r\nQuestions\r\n' + csv(T.ques)); };
+$('resAll').onclick = () => { const R = readResults(), mode = { T: 'Training', B: 'Boss fight', C: 'Classic' };
+  download(`boss-squad-every-answer-${stamp()}.csv`, csv([['Time', 'Student', 'Class', 'Part', 'Sheet row', 'Question', 'Their answer', 'Result'],
+    ...R.log.map(e => [new Date(e.t).toLocaleString(), e.n, (CLS[e.c] || [e.c])[0], mode[e.m] || e.m, e.r || '', e.q, e.a, e.ok === null ? 'Skipped' : e.ok ? 'Right' : 'Wrong'])])); };
+let resClearArm = 0;
+$('resClear').onclick = () => { if (Date.now() - resClearArm > 3000) { resClearArm = Date.now(); $('resClear').textContent = 'Tap again to clear all results'; setTimeout(() => $('resClear').textContent = 'Clear results', 3000); return; }
+  cmd({ c: 'clearLog' }); try { localStorage.setItem(LKEY, '[]'); } catch (e) {} resClearArm = 0; $('resClear').textContent = 'Clear results'; renderResults(); };
+window.addEventListener('storage', e => { if (e.key === LKEY) renderResults(); });
+setInterval(() => { if ($('resDetails').open) renderResults(); }, 3000);
+$('resDetails').addEventListener('toggle', renderResults);
+renderResults();
+
 </script>
 </body>
 </html>
