@@ -16,7 +16,7 @@
    ================================================================== */
 const CONFIG = {
   // Where students open the join page (host join.html on Netlify Drop, GitHub Pages, etc.)
-  joinUrl: 'join.html',   // works as-is when this file sits next to join.html on your site; or paste a full link
+  joinUrl: 'https://shteam-sams.github.io/Boss-Squad/join.html',   // the student join page
   joinLabel: '',            // optional short text shown on screen instead of the full URL (e.g. a bit.ly link)
   title: 'Boss Squad',
   // Optional: a Google Sheet to load questions from on startup (the control panel can set this too)
@@ -629,6 +629,7 @@ function feed(text, color) { G.feed.push({ text, color, at: Date.now() }); if (G
 const playerList = () => G.order.map(id => G.players[id]).filter(Boolean);
 
 function spawnBoss() {
+  G.mood = 'neutral'; V.accHist = []; setTimeout(() => StreamMusic.newBoss(), 0);
   const kinds = [{ name: 'Rogue Atom', kind: 'atom' }, { name: 'Mega Microbe', kind: 'microbe' }, { name: 'Black Hole Beast', kind: 'hole' }];
   G.bossNum++;
   const k = kinds[(G.bossNum - 1) % kinds.length], tier = Math.floor((G.bossNum - 1) / kinds.length);
@@ -693,6 +694,7 @@ function closeQuestion() {
     G.lastResult[id] = { qid: q.id, ...msg, pick: answered ? a : null };
   });
   // Phoenix Strike: everyone answered right
+  updateMood(q.roster.length ? q.roster.filter(id => q.answers[id] === q.correct).length / q.roster.length : 0);
   const allRight = q.roster.length > 0 && q.roster.every(id => !G.players[id] || q.answers[id] === q.correct);
   let px = 0;
   if (allRight && G.boss && G.boss.hp > 0) {
@@ -890,11 +892,12 @@ function runCmd(m) {
     case 'skipIssues': G.skipIssues = !!m.v; break;
     case 'seconds': G.questionSeconds = clamp(m.v | 0, 5, 300); break;
     case 'sound': G.sound = !!m.v; break;
+    case 'music': G.music = { on: m.on !== undefined ? !!m.on : (G.music || {}).on !== false, vol: m.vol !== undefined ? Math.max(0, Math.min(1, +m.vol)) : ((G.music || {}).vol ?? .5) }; StreamMusic.volume(); break;
     case 'reset': {
-      const room = m.newRoom ? newRoomCode() : G.room, bank = G.bankText, sound = G.sound, secs = G.questionSeconds;
+      const room = m.newRoom ? newRoomCode() : G.room, bank = G.bankText, sound = G.sound, secs = G.questionSeconds, music = G.music;
       conns.forEach(c => { send(c, { t: 'ended' }); setTimeout(() => c.close(), 300); }); conns.clear();
       const keep = { source: G.source, sheet: G.sheet, sheetQs: G.sheetQs, skipIssues: G.skipIssues, title: G.title, shuffle: G.shuffle, rules: G.rules, mode: G.mode, trainingMinutes: G.trainingMinutes };
-      G = freshGame(room, bank); Object.assign(G, keep); G.sound = sound; G.questionSeconds = secs; V.p = {}; V.sprite = {}; V.boss = null; qrCache = null;
+      G = freshGame(room, bank); Object.assign(G, keep); G.sound = sound; G.music = music; G.questionSeconds = secs; V.p = {}; V.sprite = {}; V.boss = null; qrCache = null;
       if (m.newRoom) { try { peer && peer.destroy(); } catch (e) {} setTimeout(startPeer, 500); }
       break;
     }
@@ -919,7 +922,7 @@ function status() {
     usable: BANK.filter(b => !(G.skipIssues && b.issue)).length,
     trainCount: BANK.filter(trainOk).length, bossCount: BANK.filter(bossOk).length,
     bankSize: BANK.length, nextNum: BANK.length ? ((G.qIndex + 1) % BANK.length) + 1 : 0, bankText: G.bankText,
-    seconds: G.questionSeconds, sound: G.sound,
+    seconds: G.questionSeconds, sound: G.sound, music: G.music || { on: true, vol: .5 }, track: StreamMusic.track, musicBlocked: StreamMusic.blocked,
     players: playerList().map(p => ({ id: p.id, name: p.name, cls: p.cls, hp: p.hp, max: p.max, energy: p.energy, alive: p.alive, streak: p.streak, on: !!p.connected, stats: p.stats,
       lvl: p.lvl || 0, ups: (p.ups || []).length, ko: p.ko > Date.now(), choosing: !!p.offer, shield: p.shield || 0 })) };
 }
@@ -939,6 +942,7 @@ const SFX = (() => {
     if (!ac) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; ac = new C(); master = ac.createGain(); master.gain.value = CONFIG.volume; master.connect(ac.destination); }
     if (ac.state === 'suspended') ac.resume(); return ac;
   }
+  const unlockCtx = () => { if (ac && ac.state === 'suspended') ac.resume(); };
   function tone(f, at, dur, type = 'sine', g = .3, slide = 0) {
     const c = ctx(); if (!c) return; const o = c.createOscillator(), v = c.createGain(), t = c.currentTime + at;
     o.type = type; o.frequency.setValueAtTime(f, t); if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f * slide), t + dur);
@@ -965,7 +969,7 @@ const SFX = (() => {
     bossAtk: () => { tone(220, 0, .4, 'sawtooth', .12, .35); noise(.05, .3, .15, 300); },
     victory: () => { [523, 659, 784, 1046, 784, 1046].forEach((f, i) => tone(f, i * .12, .45, 'triangle', .22)); tone(1318, .72, 1.2, 'sine', .2); },
   };
-  return { play(n) { const t = performance.now(); if (last[n] && t - last[n] < 70) return; last[n] = t; try { bank[n] && bank[n](); } catch (e) {} }, unlock: ctx };
+  return { play(n) { const t = performance.now(); if (last[n] && t - last[n] < 70) return; last[n] = t; try { bank[n] && bank[n](); } catch (e) {} }, unlock: ctx, unlockCtx };
 })();
 function sfx(n) { if (G && G.sound !== false) SFX.play(n); }
 addEventListener('pointerdown', () => SFX.unlock());
@@ -1357,7 +1361,7 @@ function drawQR(x, y, size) {
   ug.imageSmoothingEnabled = false; ug.fillStyle = '#fff'; rrect(ug, x - 8, y - 8, size + 16, size + 16, 14); ug.fill();
   ug.drawImage(c, x, y, size, size); ug.imageSmoothingEnabled = true;
 }
-const joinLabel = () => CONFIG.joinLabel || CONFIG.joinUrl.replace(/^https?:\/\//, '');
+const joinLabel = () => CONFIG.joinLabel || joinUrl().replace(/^https?:\/\//, '');   // includes ?room=CODE so typing it fills in the code
 
 /* ---------- UI panels ---------- */
 function drawBossBar(t) {
@@ -1442,15 +1446,16 @@ function drawLobby(t) {
   ug.fillStyle = 'rgba(20,18,31,.82)'; rrect(ug, x, y + 210, w, 560, 30); ug.fill();
   drawQR(x + 40, y + 250, 300);
   const tx = x + 390;
-  ug.font = `600 26px ${FONT}`; ug.fillStyle = 'rgba(246,244,239,.7)'; ug.fillText('Scan the code, or go to', tx, y + 280);
-  ug.fillStyle = COL.chalk; const ls = fitFont(joinLabel(), w - 420, 30, 16, 700); ug.fillText(joinLabel(), tx, y + 322);
-  ug.font = `600 26px ${FONT}`; ug.fillStyle = 'rgba(246,244,239,.7)'; ug.fillText('and enter this code', tx, y + 390);
+  ug.font = `700 34px ${FONT}`; ug.fillStyle = COL.chalk; ug.fillText('Scan the code to join', tx, y + 290);
+  ug.font = `600 26px ${FONT}`; ug.fillStyle = 'rgba(246,244,239,.7)'; ug.fillText('Room code', tx, y + 390);
   fitFont(spaced(G.room), w - 420, 110, 60); ug.fillStyle = COL.yellow; ug.fillText(spaced(G.room), tx - 4, y + 500);
+  ug.font = `600 24px ${FONT}`; ug.fillStyle = 'rgba(246,244,239,.7)'; ug.fillText('Or type this link (it fills in the code for you):', x + 40, y + 600);
+  ug.fillStyle = COL.chalk; fitFont(joinLabel(), w - 80, 32, 16, 700); ug.fillText(joinLabel(), x + 40, y + 640);
   const n = playerList().length;
   ug.font = `700 34px ${FONT}`; ug.fillStyle = COL.chalk;
-  ug.fillText(n ? `${n} player${n === 1 ? '' : 's'} ready` : 'Waiting for players…', x + 40, y + 660);
+  ug.fillText(n ? `${n} player${n === 1 ? '' : 's'} ready` : 'Waiting for players…', x + 40, y + 700);
   ug.font = `600 24px ${FONT}`; ug.fillStyle = 'rgba(246,244,239,.6)';
-  ug.fillText('Pick a class, choose your colors and join the squad', x + 40, y + 712);
+  ug.fillText('Pick a class, choose your colors and join the squad', x + 40, y + 742);
   if (!netOk) { ug.fillStyle = COL.pink; ug.font = `700 24px ${FONT}`; ug.fillText(netStatus, x, y + 820); }
 }
 function drawVictory(t) {
@@ -1970,6 +1975,7 @@ function closeQuestionCamp() {
     G.lastResult[id] = { qid: q.id, ...msg, pick: answered ? a : null };
   });
   G.boss.hp -= dmg;
+  updateMood(acc);
   if (G.camp.regen > 0) { G.camp.regen--; playerList().forEach(t => { if (t.alive) t.hp = Math.min(t.max, t.hp + 8); }); }   // Biologist's Symbiosis
   const luck = Math.min(3, playerList().filter(p => p.connected && has(p, 'luck')).length) + (G.camp.luck || 0); G.camp.luck = 0;
   const need = Math.min(21, Math.ceil(acc * 20) + 1 + luck), roll = 1 + Math.floor(Math.random() * 20);
@@ -2009,6 +2015,7 @@ function closeQuestionCamp() {
       });
       Fx.special(victims, R.name); feed(`${G.boss.name} used ${R.name}!`, COL.pink);
     } else feed(R.muted ? 'The boss is muted: no special attack!' : `Safe! The boss rolled ${R.roll}`, R.muted ? '#2FB5B3' : COL.lime);
+    if (R.special) updateMood(null);
     dirty();
     checkDefeat(q, 2200);
   }, revealAt * 1000);
@@ -2929,6 +2936,78 @@ async function runReel(cls) {
   V.reelDone = true;
 }
 
+/* =================================================================
+   Stream music: MP3s in the music/ folder next to this page
+   ================================================================= */
+const MUSIC = { dir: 'music/', files: { intro: 'intro', training: 'training', boss: 'boss', atom: 'boss-atom', microbe: 'boss-microbe', hole: 'boss-blackhole',
+  chemistry: 'chemistry', biology: 'biology', physics: 'physics', astronomy: 'astronomy', winning: 'winning', losing: 'losing', victory: 'victory' } };
+const StreamMusic = (() => {
+  const decks = [new Audio(), new Audio()]; let cur = 0, mode = null, track = null, blocked = false, firstBoss = true, fades = [null, null];
+  const vol = () => (G && G.music ? G.music.vol : .5);
+  decks.forEach((a, i) => { a.preload = 'auto';
+    a.addEventListener('ended', () => { if (i === cur && mode) next(); });
+    a.addEventListener('error', () => { if (i === cur && mode) setTimeout(() => { if (i === cur && mode) next(true); }, 1500); }); });
+  function fade(i, to, ms, then) {
+    clearInterval(fades[i]); const a = decks[i], from = a.volume, t0 = Date.now();
+    fades[i] = setInterval(() => { const k = Math.min(1, (Date.now() - t0) / ms); a.volume = Math.max(0, Math.min(1, from + (to - from) * k)); if (k >= 1) { clearInterval(fades[i]); then && then(); } }, 40);
+  }
+  function play(name, loop) {
+    if (!MUSIC.files[name]) return;
+    const old = cur; cur = 1 - cur; const a = decks[cur]; track = name;
+    a.src = MUSIC.dir + MUSIC.files[name] + '.mp3'; a.loop = !!loop; a.volume = 0; a.currentTime = 0;
+    a.play().then(() => { blocked = false; fade(cur, vol(), 1500); }).catch(() => { blocked = true; });
+    if (!decks[old].paused) fade(old, 0, 1500, () => decks[old].pause());
+  }
+  function stop() { track = null; decks.forEach((a, i) => { if (!a.paused) fade(i, 0, 1200, () => a.pause()); }); }
+  function next(err) {
+    if (mode === 'neutral') {   // the boss's own song first, then shuffle the generic tracks
+      const kind = G.boss && G.boss.kind;
+      if (firstBoss && kind && !err) { firstBoss = false; return play(kind); }
+      const pool = ['boss', 'chemistry', 'biology', 'physics', 'astronomy', kind].filter(n => n && n !== track);
+      return play(pool[Math.floor(Math.random() * pool.length)]);
+    }
+    if (mode === 'victory') { mode = 'intro'; return play('intro', true); }
+    if (mode) play(mode, true);
+  }
+  return {
+    set(m) { if (m === mode) return; const prev = mode; mode = m;
+      if (!m) return stop();
+      if (m === 'neutral') { if (prev === null || prev === 'intro' || prev === 'victory') firstBoss = true; return next(); }
+      play(m, m !== 'victory'); },
+    newBoss() { firstBoss = true; if (mode === 'neutral') next(); },
+    volume() { const a = decks[cur]; if (!a.paused) { clearInterval(fades[cur]); a.volume = vol(); } },
+    unlock() { if (blocked && mode) { blocked = false; const a = decks[cur]; a.play().then(() => fade(cur, vol(), 800)).catch(() => { blocked = true; }); } },
+    get blocked() { return blocked; }, get track() { return track; }, get mode() { return mode; },
+  };
+})();
+// Which music fits the moment
+function musicMode() {
+  if (!G.music || !G.music.on || DEMO) return null;
+  switch (G.phase) {
+    case 'lobby': return 'intro';
+    case 'training': return null;                 // students hear music on their own devices
+    case 'victory': return 'victory';
+    case 'defeat': return 'losing';
+  }
+  if (!G.boss) return 'intro';
+  return G.mood === 'winning' ? 'winning' : G.mood === 'losing' ? 'losing' : 'neutral';
+}
+// After each question: is the class cruising, in trouble, or somewhere in between?
+function updateMood(acc) {
+  const live = playerList().filter(p => p.connected); if (!live.length) return;
+  if (acc == null) acc = V.accHist && V.accHist.length ? V.accHist.pop() : .7;
+  const hp = live.reduce((s, p) => s + (p.alive ? p.hp / p.max : 0), 0) / live.length, down = live.filter(p => !p.alive).length / live.length;
+  V.accHist = (V.accHist || []).concat(acc).slice(-2); const avg = V.accHist.reduce((a, b) => a + b, 0) / V.accHist.length;
+  G.mood = (down >= .25 || hp < .4 || avg < .45) ? 'losing' : (avg >= .8 && hp >= .55) ? 'winning' : 'neutral';
+}
+function drawSoundPrompt() {
+  if (!StreamMusic.blocked || !StreamMusic.mode) return;
+  ug.font = `700 26px ${FONT}`; const t = '🔇 Click the game screen once to turn on music'; const w = ug.measureText(t).width + 40;
+  ug.fillStyle = 'rgba(20,18,31,.88)'; rrect(ug, 1920 - w - 40, 1080 - 76, w, 50, 25); ug.fill();
+  ug.fillStyle = COL.yellow; ug.textAlign = 'left'; ug.textBaseline = 'middle'; ug.fillText(t, 1920 - w - 20, 1080 - 51);
+}
+document.addEventListener('pointerdown', () => { StreamMusic.unlock(); SFX.unlockCtx && SFX.unlockCtx(); });
+
 /* ---------- main loop ---------- */
 function fitStage() { const s = Math.min(innerWidth / 1920, innerHeight / 1080);
   $('stage').style.transform = `translate(${(innerWidth - 1920 * s) / 2}px, ${(innerHeight - 1080 * s) / 2}px) scale(${s})`; }
@@ -2937,6 +3016,7 @@ let lastT = now();
 function warmSprites() { for (let n = 0; n < 2 && warmQ.length; n++) { const [p, ps] = warmQ.shift(); if (G.players[p.id] === p) spriteOf(p, ps); } }
 function frame() {
   warmSprites();
+  if (G) { if (!G.music) G.music = { on: true, vol: .5 }; StreamMusic.set(musicMode()); }
   const t = now(), dt = Math.min(.05, t - lastT); lastT = t;
   const sh = V.shakeT && t - V.shakeT < .5 ? (1 - (t - V.shakeT) / .5) * 3 : 0;
   wg.setTransform(3, 0, 0, 3, Math.round((Math.random() - .5) * sh) * 3, Math.round((Math.random() - .5) * sh) * 3);   // world is drawn in 480×270 units at 3× detail
@@ -2948,7 +3028,7 @@ function frame() {
   wg.setTransform(1, 0, 0, 1, 0, 0);
   ug.clearRect(0, 0, 1920, 1080);
   if (G.phase !== 'training') drawLabels(); else drawLeaderboard(t);
-  drawBossBar(t); drawJoinChip(); drawLobby(t); if (!drawSpotlight(t)) drawQuestion(t); drawTrainingUI(t); drawFloaters(t); drawCampBoss(t); drawPhoenixBanner(t); drawDefeat(t); drawDemoCaption(t); drawShowTitle(t); drawFeed(); drawVictory(t); drawNet();
+  drawBossBar(t); drawJoinChip(); drawLobby(t); if (!drawSpotlight(t)) drawQuestion(t); drawTrainingUI(t); drawFloaters(t); drawCampBoss(t); drawPhoenixBanner(t); drawDefeat(t); drawDemoCaption(t); drawShowTitle(t); drawSoundPrompt(); drawFeed(); drawVictory(t); drawNet();
   requestAnimationFrame(frame);
 }
 layout(); requestAnimationFrame(frame);
