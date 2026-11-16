@@ -583,6 +583,18 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const RULES = CONFIG.rules, COL = CONFIG.colors;
 const FONT = '"Bricolage Grotesque", "Arial Black", Arial, sans-serif';
 const GKEY = 'sciquest:game:v1', SKEY = 'sciquest:status', CKEY = 'sciquest:cmd';
+/* ---------- results log: every answer, kept until the teacher clears it ---------- */
+const LKEY = 'bosssquad:log';
+let LOG = []; try { LOG = JSON.parse(localStorage.getItem(LKEY) || '[]'); if (!Array.isArray(LOG)) LOG = []; } catch (e) { LOG = []; }
+let logDirty = false;
+function logAnswer(p, q, mode, pick) {
+  if (DEMO || !p || !q) return;
+  const has = pick !== undefined && pick !== null && q.choices[pick];
+  LOG.push({ t: Date.now(), n: p.name, c: p.cls, r: q.row || null, q: (q.text || '').slice(0, 160), m: mode,
+             ok: has ? (pick === q.correct ? 1 : 0) : null, a: has ? (q.choices[pick].t || 'Picture') : '' });
+  logDirty = true;
+}
+setInterval(() => { if (logDirty) { logDirty = false; try { localStorage.setItem(LKEY, JSON.stringify(LOG)); } catch (e) {} } }, 1500);
 const params = new URLSearchParams(location.search);
 const DEMO = params.has('demo') || params.has('showcase');
 function peerServer() {
@@ -652,7 +664,7 @@ function askQuestion() {
   let choices = src.choices.map(c => ({ ...c }));
   if (G.shuffle !== false) for (let i = choices.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [choices[i], choices[j]] = [choices[j], choices[i]]; }
   const secs = src.seconds || G.questionSeconds;
-  G.q = { id: uid(), num: G.qIndex + 1, text: src.text, img: src.img || null, choices: choices.map(c => ({ t: c.t, img: c.img || null })),
+  G.q = { id: uid(), num: G.qIndex + 1, row: src.row || null, text: src.text, img: src.img || null, choices: choices.map(c => ({ t: c.t, img: c.img || null })),
           correct: choices.findIndex(c => c.ok), endsAt: Date.now() + secs * 1000, dur: secs * 1000, answers: {},
           roster: playerList().filter(p => p.connected).map(p => p.id), counts: null, times: {} };
   G.phase = 'question'; sfx('ask'); dirty();
@@ -676,6 +688,7 @@ function closeQuestion() {
     const p = G.players[id]; if (!p) return;
     const a = q.answers[id], answered = a !== undefined, ok = answered && a === q.correct;
     if (answered && q.counts[a] !== undefined) q.counts[a]++;
+    logAnswer(p, q, 'C', answered ? a : null);
     let msg;
     if (p.alive) {
       if (ok) { const before = p.energy; p.energy = Math.min(RULES.maxEnergy, p.energy + RULES.energyPerCorrect); p.stats.correct++;
@@ -892,6 +905,7 @@ function runCmd(m) {
     case 'skipIssues': G.skipIssues = !!m.v; break;
     case 'seconds': G.questionSeconds = clamp(m.v | 0, 5, 300); break;
     case 'sound': G.sound = !!m.v; break;
+    case 'clearLog': LOG = []; try { localStorage.setItem(LKEY, '[]'); } catch (e) {} feed('Results cleared', COL.chalk); break;
     case 'music': G.music = { on: m.on !== undefined ? !!m.on : (G.music || {}).on !== false, vol: m.vol !== undefined ? Math.max(0, Math.min(1, +m.vol)) : ((G.music || {}).vol ?? .5) }; StreamMusic.volume(); break;
     case 'reset': {
       const room = m.newRoom ? newRoomCode() : G.room, bank = G.bankText, sound = G.sound, secs = G.questionSeconds, music = G.music;
@@ -1820,7 +1834,7 @@ function dealQ(p) {
   if (!p.order || p.qp >= p.order.length || p.order.some(i => !BANK[i])) { p.order = shuffle(pool.slice()); p.qp = 0; }
   const src = BANK[p.order[p.qp++]];
   const choices = src.choices.map(c => ({ ...c })); if (G.shuffle !== false) shuffle(choices);
-  p.tq = { id: uid(), text: src.text, img: src.img || null, choices: choices.map(c => ({ t: c.t, img: c.img || null })),
+  p.tq = { id: uid(), row: src.row || null, text: src.text, img: src.img || null, choices: choices.map(c => ({ t: c.t, img: c.img || null })),
            correct: choices.findIndex(c => c.ok), pick: null, ok: null, msg: '', next: 0 };
   dirty();
 }
@@ -1828,7 +1842,7 @@ function tAnswer(p, qid, i) {
   const q = p.tq;
   if (!trainActive() || !q || q.id !== qid || q.pick !== null || p.offer || p.ko > Date.now()) return;
   if (!(i >= 0 && i < q.choices.length)) return;
-  q.pick = i; q.ok = i === q.correct; p.stats.answered++;
+  q.pick = i; q.ok = i === q.correct; p.stats.answered++; logAnswer(p, q, 'T', i);
   G.camp.tAns = (G.camp.tAns || 0) + 1;
   if (q.ok) {
     G.camp.tOk = (G.camp.tOk || 0) + 1; p.stats.correct++; p.tstreak++;
@@ -1931,7 +1945,7 @@ function closeQuestionCamp() {
   q.counts = q.choices.map(() => 0);
   const roster = q.roster.filter(id => G.players[id]);
   let right = 0; const times = [];
-  roster.forEach(id => { const a = q.answers[id]; if (a !== undefined && q.counts[a] !== undefined) q.counts[a]++; if (a === q.correct) { right++; if (q.times[id]) times.push(q.times[id]); } });
+  roster.forEach(id => { const a = q.answers[id]; logAnswer(G.players[id], q, 'B', a === undefined ? null : a); if (a !== undefined && q.counts[a] !== undefined) q.counts[a]++; if (a === q.correct) { right++; if (q.times[id]) times.push(q.times[id]); } });
   const n = Math.max(1, roster.length), acc = right / n;
   const pace = times.length ? times.reduce((s, x) => s + x, 0) / times.length / q.dur : 1;
   const speed = right ? (pace < .35 ? .15 : pace < .6 ? .07 : 0) : 0;
