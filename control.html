@@ -147,6 +147,10 @@
     <div class="stack">
       <label class="f">Seconds per question <input type="number" id="secs" min="5" max="300"></label>
       <label class="check"><input type="checkbox" id="sound"> Sound effects on the display</label>
+      <label class="check"><input type="checkbox" id="musicOn"> Music on the display</label>
+      <label class="lbl" for="musicVol">Music volume</label>
+      <input type="range" id="musicVol" min="0" max="100" step="5">
+      <p class="note" id="musicNow"></p>
     </div>
   </details>
 
@@ -239,6 +243,9 @@ function render() {
   renderSheet(); renderMode();
   if (document.activeElement !== $('secs')) $('secs').value = S.seconds;
   $('sound').checked = S.sound !== false;
+  const mu = S.music || { on: true, vol: .5 }; $('musicOn').checked = mu.on !== false;
+  if (document.activeElement !== $('musicVol')) $('musicVol').value = Math.round((mu.vol ?? .5) * 100);
+  $('musicNow').textContent = S.musicBlocked ? 'Music is waiting: click the game screen once to allow sound.' : S.track ? `Now playing: ${S.track}` : '';
 }
 setInterval(render, 1000);
 
@@ -315,6 +322,8 @@ $('restore').onclick = () => cmd({ c: 'restore' });
 document.querySelectorAll('[data-boss]').forEach(b => b.onclick = () => cmd({ c: 'bossHp', v: +b.dataset.boss }));
 $('secs').onchange = e => cmd({ c: 'seconds', v: +e.target.value });
 $('sound').onchange = e => cmd({ c: 'sound', v: e.target.checked });
+$('musicOn').onchange = e => cmd({ c: 'music', on: e.target.checked });
+$('musicVol').oninput = e => cmd({ c: 'music', vol: e.target.value / 100 });
 $('copy').onclick = async () => { if (!S) return; try { await navigator.clipboard.writeText(S.joinUrl); $('copy').textContent = 'Copied'; } catch (e) { $('copy').textContent = 'Select the link above to copy'; } setTimeout(() => $('copy').textContent = 'Copy join link', 2000); };
 $('saveBank').onclick = () => {
   const blocks = $('bank').value.replace(/\r/g, '').split(/\n\s*\n/).map(b => b.split('\n').map(l => l.trim()).filter(Boolean)).filter(b => b.length);
