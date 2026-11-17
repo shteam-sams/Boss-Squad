@@ -109,6 +109,10 @@
         <button class="go" id="reviveAll">Revive everyone and keep fighting</button>
         <button id="rematch">Restart this boss at full health</button>
       </div>
+      <label class="check"><input type="checkbox" id="autoOn"> Auto-advance boss-fight questions</label>
+      <label class="lbl" for="autoGap">Seconds between questions (time to spend energy)</label>
+      <input type="number" id="autoGap" min="3" max="60" step="1">
+      <p class="note" id="autoNote"></p>
       <button class="go" id="ask">Ask next question</button>
       <button id="close">Close question now</button>
       <p class="note" id="next"></p>
@@ -259,6 +263,8 @@ function render() {
   renderSheet(); renderMode();
   if (document.activeElement !== $('secs')) $('secs').value = S.seconds;
   $('sound').checked = S.sound !== false;
+  $('autoOn').checked = S.auto !== false; if (document.activeElement !== $('autoGap')) $('autoGap').value = S.autoGap || 8;
+  $('autoNote').textContent = S.auto === false ? 'Off: click Ask next question for each one.' : S.phase === 'question' ? 'On: the next question starts by itself after this one.' : S.autoAt && S.phase === 'idle' ? `Next question in ${Math.max(0, Math.ceil((S.autoAt - Date.now()) / 1000))} seconds. Click Ask next question to go now.` : 'On: questions start by themselves during boss fights.';
   const mu = S.music || { on: true, vol: .5 }; $('musicOn').checked = mu.on !== false;
   if (document.activeElement !== $('musicVol')) $('musicVol').value = Math.round((mu.vol ?? .5) * 100);
   $('musicNow').textContent = S.musicBlocked ? 'Music is waiting: click the game screen once to allow sound.' : S.track ? `Now playing: ${S.track}` : '';
@@ -338,6 +344,8 @@ $('restore').onclick = () => cmd({ c: 'restore' });
 document.querySelectorAll('[data-boss]').forEach(b => b.onclick = () => cmd({ c: 'bossHp', v: +b.dataset.boss }));
 $('secs').onchange = e => cmd({ c: 'seconds', v: +e.target.value });
 $('sound').onchange = e => cmd({ c: 'sound', v: e.target.checked });
+$('autoOn').onchange = e => cmd({ c: 'auto', on: e.target.checked });
+$('autoGap').onchange = e => cmd({ c: 'auto', gap: +e.target.value });
 $('musicOn').onchange = e => cmd({ c: 'music', on: e.target.checked });
 $('musicVol').oninput = e => cmd({ c: 'music', vol: e.target.value / 100 });
 $('copy').onclick = async () => { if (!S) return; try { await navigator.clipboard.writeText(S.joinUrl); $('copy').textContent = 'Copied'; } catch (e) { $('copy').textContent = 'Select the link above to copy'; } setTimeout(() => $('copy').textContent = 'Copy join link', 2000); };
