@@ -640,11 +640,13 @@ setInterval(() => { if (saveDirty && !DEMO) { saveDirty = false; try { localStor
 function feed(text, color) { G.feed.push({ text, color, at: Date.now() }); if (G.feed.length > 6) G.feed.shift(); }
 const playerList = () => G.order.map(id => G.players[id]).filter(Boolean);
 
-function spawnBoss() {
+function spawnBoss(pickIdx) {
   G.mood = 'neutral'; V.accHist = []; setTimeout(() => StreamMusic.newBoss(), 0);
   const kinds = [{ name: 'Rogue Atom', kind: 'atom' }, { name: 'Mega Microbe', kind: 'microbe' }, { name: 'Black Hole Beast', kind: 'hole' }];
   G.bossNum++;
-  const k = kinds[(G.bossNum - 1) % kinds.length], tier = Math.floor((G.bossNum - 1) / kinds.length);
+  const pool = kinds.filter(k => k.kind !== G.lastBossKind);   // random, never the same boss twice in a row
+  const k = pickIdx != null ? kinds[pickIdx % kinds.length] : pool[Math.floor(Math.random() * pool.length)], tier = Math.floor((G.bossNum - 1) / kinds.length);
+  G.lastBossKind = k.kind;
   const n = Math.max(1, playerList().filter(p => p.connected).length || playerList().length);
   const max = Math.round((RULES.bossHpBase + RULES.bossHpPerPlayer * n) * (1 + tier * 0.25));
   G.boss = { name: k.name + (tier ? ' ' + ['II', 'III', 'IV', 'V'][Math.min(tier - 1, 3)] : ''), kind: k.kind, hp: max, max };
@@ -854,7 +856,7 @@ function viewFor(id) {
   const p = G.players[id], q = G.q;
   const v = { t: 'state', phase: G.phase, title: G.title || CONFIG.title,
     sheet: G.source === 'sheet' && G.sheet ? G.sheet.id : null, pre: nextRefs(),
-    rules: { maxEnergy: RULES.maxEnergy, reviveStreak: RULES.reviveStreak },
+    rules: { maxEnergy: RULES.maxEnergy, reviveStreak: RULES.reviveStreak }, autoAt: G.autoAt || 0,
     boss: G.boss ? { name: G.boss.name, hp: G.boss.hp, max: G.boss.max } : null,
     me: p ? { id: p.id, name: p.name, cls: p.cls, seed: p.seed, look: p.look, hp: p.hp, max: p.max, energy: p.energy, alive: p.alive, streak: p.streak, stats: p.stats } : null,
     team: playerList().map(x => ({ id: x.id, name: x.name, cls: x.cls, seed: x.seed, look: x.look, hp: x.hp, max: x.max, alive: x.alive, on: !!x.connected, sh: x.shield || 0, e: x.energy, me: x.maxE || RULES.maxEnergy })),
@@ -905,13 +907,14 @@ function runCmd(m) {
     case 'skipIssues': G.skipIssues = !!m.v; break;
     case 'seconds': G.questionSeconds = clamp(m.v | 0, 5, 300); break;
     case 'sound': G.sound = !!m.v; break;
+    case 'auto': if (m.on !== undefined) G.auto = !!m.on; if (m.gap !== undefined) G.autoGap = Math.max(3, Math.min(60, +m.gap || 8)); G.autoAt = 0; break;
     case 'clearLog': LOG = []; try { localStorage.setItem(LKEY, '[]'); } catch (e) {} feed('Results cleared', COL.chalk); break;
     case 'music': G.music = { on: m.on !== undefined ? !!m.on : (G.music || {}).on !== false, vol: m.vol !== undefined ? Math.max(0, Math.min(1, +m.vol)) : ((G.music || {}).vol ?? .5) }; StreamMusic.volume(); break;
     case 'reset': {
-      const room = m.newRoom ? newRoomCode() : G.room, bank = G.bankText, sound = G.sound, secs = G.questionSeconds, music = G.music;
+      const room = m.newRoom ? newRoomCode() : G.room, bank = G.bankText, sound = G.sound, secs = G.questionSeconds, music = G.music, auto = G.auto, autoGap = G.autoGap;
       conns.forEach(c => { send(c, { t: 'ended' }); setTimeout(() => c.close(), 300); }); conns.clear();
       const keep = { source: G.source, sheet: G.sheet, sheetQs: G.sheetQs, skipIssues: G.skipIssues, title: G.title, shuffle: G.shuffle, rules: G.rules, mode: G.mode, trainingMinutes: G.trainingMinutes };
-      G = freshGame(room, bank); Object.assign(G, keep); G.sound = sound; G.music = music; G.questionSeconds = secs; V.p = {}; V.sprite = {}; V.boss = null; qrCache = null;
+      G = freshGame(room, bank); Object.assign(G, keep); G.sound = sound; G.music = music; G.auto = auto; G.autoGap = autoGap; G.questionSeconds = secs; V.p = {}; V.sprite = {}; V.boss = null; qrCache = null;
       if (m.newRoom) { try { peer && peer.destroy(); } catch (e) {} setTimeout(startPeer, 500); }
       break;
     }
@@ -936,7 +939,7 @@ function status() {
     usable: BANK.filter(b => !(G.skipIssues && b.issue)).length,
     trainCount: BANK.filter(trainOk).length, bossCount: BANK.filter(bossOk).length,
     bankSize: BANK.length, nextNum: BANK.length ? ((G.qIndex + 1) % BANK.length) + 1 : 0, bankText: G.bankText,
-    seconds: G.questionSeconds, sound: G.sound, music: G.music || { on: true, vol: .5 }, track: StreamMusic.track, musicBlocked: StreamMusic.blocked,
+    seconds: G.questionSeconds, sound: G.sound, auto: G.auto !== false, autoGap: G.autoGap || 8, autoAt: G.autoAt || 0, music: G.music || { on: true, vol: .5 }, track: StreamMusic.track, musicBlocked: StreamMusic.blocked,
     players: playerList().map(p => ({ id: p.id, name: p.name, cls: p.cls, hp: p.hp, max: p.max, energy: p.energy, alive: p.alive, streak: p.streak, on: !!p.connected, stats: p.stats,
       lvl: p.lvl || 0, ups: (p.ups || []).length, ko: p.ko > Date.now(), choosing: !!p.offer, shield: p.shield || 0 })) };
 }
@@ -1419,7 +1422,9 @@ function drawQuestion(t) {
     if (G.phase === 'idle' && !DEMO) {
       ug.fillStyle = 'rgba(20,18,31,.82)'; rrect(ug, 360, 960, 1200, 76, 38); ug.fill();
       ug.textAlign = 'center'; ug.textBaseline = 'middle'; ug.font = `700 30px ${FONT}`; ug.fillStyle = COL.chalk;
-      ug.fillText(G.mode === 'campaign' ? 'Spend energy on your abilities: attack, heal, protect or power up the squad' : 'Spend your energy: attack the boss or heal a classmate', 960, 999);
+      const hint = G.mode === 'campaign' ? 'Spend energy on your abilities: attack, heal, protect or power up the squad' : 'Spend your energy: attack the boss or heal a classmate';
+      const left = G.autoAt ? Math.max(0, Math.ceil((G.autoAt - Date.now()) / 1000)) : 0;
+      ug.fillText(left ? `Next question in ${left}… ${hint}` : hint, 960, 999);
     }
     return;
   }
@@ -2827,7 +2832,7 @@ async function runShowcase() {
   Object.keys(P).forEach(k => delete P[k]); G.order = []; V.p = {}; V.caption = null;
   const bossTag = { atom: 'Unstable and electric', microbe: 'Gross, squishy, always watching', hole: 'Pulls everything in' };
   for (let i = 0; i < 3; i++) {
-    G.bossNum = i; spawnBoss(); G.phase = 'idle'; V.boss.spawnT = now();
+    G.bossNum = i; spawnBoss(i); G.phase = 'idle'; V.boss.spawnT = now();
     V.title = { text: G.boss.name, sub: bossTag[G.boss.kind], col: bossColor(), t0: now(), dur: 1.6 }; await sleep(1800);
     say(`Boss · ${G.boss.name}`, bossColor()); await sleep(3200);
     V.boss.hurtT = now(); sfx('hit'); await sleep(900);
@@ -3028,6 +3033,15 @@ function fitStage() { const s = Math.min(innerWidth / 1920, innerHeight / 1080);
 addEventListener('resize', fitStage); fitStage();
 let lastT = now();
 function warmSprites() { for (let n = 0; n < 2 && warmQ.length; n++) { const [p, ps] = warmQ.shift(); if (G.players[p.id] === p) spriteOf(p, ps); } }
+// Auto-advance: in a boss fight, ask the next question after a short break for spending energy
+function autoTick() {
+  if (G.auto === false || DEMO) { if (G.autoAt) { G.autoAt = 0; dirty(); } return; }
+  const ready = G.phase === 'idle' && G.boss && G.boss.hp > 0 && BANK.some(bossOk) && playerList().some(p => p.connected);
+  if (!ready) { if (G.autoAt) { G.autoAt = 0; dirty(); } return; }
+  if (!G.autoAt) { G.autoAt = Date.now() + (G.autoGap || 8) * 1000; dirty(); return; }
+  if (Date.now() >= G.autoAt) { G.autoAt = 0; askQuestion(); }
+}
+setInterval(autoTick, 250);
 function frame() {
   warmSprites();
   if (G) { if (!G.music) G.music = { on: true, vol: .5 }; StreamMusic.set(musicMode()); }
