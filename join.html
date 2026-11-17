@@ -1085,7 +1085,7 @@ function render() {
     const text = s.phase === 'lobby' ? ['You’re in!', 'Watch the screen. The battle starts soon.'] :
       s.phase === 'defeat' ? ['The boss won this round', 'Regroup! Your teacher can bring everyone back into the fight.'] :
       s.phase === 'victory' ? ['Boss defeated!', `You dealt ${m.stats.dmg} damage, healed ${m.stats.heal} and got ${m.stats.correct} right.`] :
-      ['Get ready', m.alive ? 'Next question is coming. Use your energy now!' : 'Next question is coming.'];
+      ['Get ready', (s.autoAt ? `Next question in about ${Math.max(1, Math.round((s.autoAt - Date.now()) / 1000))} seconds. ` : 'Next question is coming. ') + (m.alive ? 'Use your energy now!' : '')];
     mc.innerHTML = '<p class="big"></p><p class="lead"></p>';
     mc.querySelector('.big').textContent = text[0]; mc.querySelector('.lead').textContent = text[1];
   }
